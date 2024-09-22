@@ -1,0 +1,110 @@
+#!/bin/bash
+
+# Check if the user provided the last part of the proxy IP
+if [ -z "$1" ]; then
+  echo "Usage: $0 <proxy-last-part OR 0 to clear"
+  exit 1
+fi
+
+# Define the proxy IP base and concatenate the provided last part
+PROXY_BASE="192.168.81."
+PROXY_IP="${PROXY_BASE}$1"
+PROXY_PORT="7071"
+PROXY_URL="http://$PROXY_IP:$PROXY_PORT/"
+
+# Define the file paths
+PROFILE_D_PROXY="/etc/profile.d/proxy.sh"
+DNF_CONF="/etc/dnf/dnf.conf"
+
+# Function to clear all proxy environment variables
+clear_all_proxy_env_vars() {
+  # Clear proxy settings in /etc/profile.d/proxy.sh
+  sudo tee "$PROFILE_D_PROXY" > /dev/null <<EOL
+# Proxy settings have been cleared
+EOL
+
+  # Remove proxy settings from /etc/dnf/dnf.conf
+  sudo sed -i '/^proxy=/d' "$DNF_CONF"
+  
+  # Remove Git proxy configuration if it exists
+  git config --global --unset-all http.proxy
+
+  # Remove npm proxy configuration if it exists
+  npm config delete proxy
+  npm config delete https-proxy
+
+  # Reset GNOME proxy settings
+  gsettings set org.gnome.system.proxy mode 'none'
+
+  # Reset Waydroid container proxy (if applicable)
+  # adb shell settings put global http_proxy :0
+}
+
+# Function to add proxy settings to /etc/profile.d/proxy.sh
+setup_profile_d_proxy() {
+  # Clear previous proxy settings
+  clear_all_proxy_env_vars
+
+  # Add new proxy settings to /etc/profile.d/proxy.sh
+  sudo tee "$PROFILE_D_PROXY" > /dev/null <<EOL
+export http_proxy="$PROXY_URL"
+export https_proxy="$PROXY_URL"
+export ftp_proxy="$PROXY_URL"
+export no_proxy="localhost,127.0.0.1,::1"
+export HTTP_PROXY="$PROXY_URL"
+export HTTPS_PROXY="$PROXY_URL"
+export FTP_PROXY="$PROXY_URL"
+export NO_PROXY="localhost,127.0.0.1,::1"
+
+export GLOBAL_AGENT_HTTP_PROXY="$PROXY_URL"
+EOL
+  echo "Proxy settings added to $PROFILE_D_PROXY"
+
+  # Source the new proxy settings (for the current session)
+  source "$PROFILE_D_PROXY"
+
+  # Set Git proxy configuration
+  git config --global http.proxy "$PROXY_URL"
+
+  # Set npm proxy configuration
+  npm config set proxy "$PROXY_URL"
+  npm config set https-proxy "$PROXY_URL"
+
+  # Set GNOME proxy settings
+  gsettings set org.gnome.system.proxy mode 'manual'
+  gsettings set org.gnome.system.proxy.http host "$PROXY_IP"
+  gsettings set org.gnome.system.proxy.http port "$PROXY_PORT"
+  gsettings set org.gnome.system.proxy.https host "$PROXY_IP"
+  gsettings set org.gnome.system.proxy.https port "$PROXY_PORT"
+  gsettings set org.gnome.system.proxy.ftp host "$PROXY_IP"
+  gsettings set org.gnome.system.proxy.ftp port "$PROXY_PORT"
+
+  # Set Waydroid container proxy (if applicable)
+  # adb shell settings put global http_proxy "$PROXY_IP"
+}
+
+# Function to add proxy settings to /etc/dnf/dnf.conf
+setup_dnf_conf() {
+  # Clear previous proxy settings
+  sudo sed -i '/^proxy=/d' "$DNF_CONF"
+
+  # Add new proxy settings
+  sudo tee -a "$DNF_CONF" > /dev/null <<EOL
+proxy=$PROXY_URL
+EOL
+  echo "Proxy settings added to $DNF_CONF"
+}
+
+# If the argument is 0, clear the proxy settings
+if [ "$1" -eq 0 ]; then
+  clear_all_proxy_env_vars
+  echo "All proxy settings have been cleared."
+  exit 0
+fi
+
+# Run the functions to set up the proxy
+setup_profile_d_proxy
+setup_dnf_conf
+
+echo "Proxy setup complete."
+
